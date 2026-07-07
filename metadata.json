@@ -1,0 +1,6 @@
+{
+  "name": "Business Plan Generator",
+  "description": "An AI-powered workspace that generates tailored, structured business plans for your specific industry, niche, and objectives, complete with interactive section-by-section editing and professional PDF download.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
