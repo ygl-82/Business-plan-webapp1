@@ -43,6 +43,7 @@ export default function App() {
   const [step, setStep] = useState<number>(1);
   const [loading, setLoading] = useState<boolean>(false);
   const [loadingPhase, setLoadingPhase] = useState<string>("");
+  const [loadingSectionStatuses, setLoadingSectionStatuses] = useState<Record<string, "pending" | "loading" | "done" | "error">>({});
   const [error, setError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -128,7 +129,7 @@ export default function App() {
     return () => clearInterval(interval);
   };
 
-  // Handle Plan Generation
+  // Handle Plan Generation (sequential section-by-section to prevent gateway/Vercel timeouts)
   const handleGeneratePlan = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -142,32 +143,69 @@ export default function App() {
 
     setLoading(true);
 
-    const cleanupSeq = runLoadingSequence();
+    const sectionsToGenerate = [
+      { key: "executiveSummary", name: "Executive Summary" },
+      { key: "marketAnalysis", name: "Market Analysis" },
+      { key: "marketingStrategy", name: "Marketing Strategy" },
+      { key: "operationsPlan", name: "Operations Plan" },
+      { key: "financialOutlook", name: "Financial Outlook" }
+    ];
+
+    const initialStatuses: Record<string, "pending" | "loading" | "done" | "error"> = {};
+    sectionsToGenerate.forEach(s => {
+      initialStatuses[s.key] = "pending";
+    });
+    setLoadingSectionStatuses(initialStatuses);
+
+    const generatedPlanData: any = {};
 
     try {
-      const response = await fetch("/api/generate-plan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          businessName,
-          niche,
-          targetAudience,
-          objectives,
-          location,
-          stage,
-          timeline,
-        }),
-      });
+      for (let i = 0; i < sectionsToGenerate.length; i++) {
+        const { key, name } = sectionsToGenerate[i];
+        
+        setLoadingSectionStatuses(prev => ({ ...prev, [key]: "loading" }));
+        setLoadingPhase(`Drafting Section ${i + 1} of 5: ${name}...`);
 
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || "Generation request failed");
+        const response = await fetch("/api/generate-section", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            section: key,
+            businessName,
+            niche,
+            targetAudience,
+            objectives,
+            location,
+            stage,
+            timeline,
+          }),
+        });
+
+        const textResponse = await response.text();
+
+        if (!response.ok) {
+          let errMsg = `Failed to generate ${name}`;
+          try {
+            const errData = JSON.parse(textResponse);
+            errMsg = errData.error || errMsg;
+          } catch (_) {
+            errMsg = textResponse || `Server responded with status ${response.status}`;
+          }
+          setLoadingSectionStatuses(prev => ({ ...prev, [key]: "error" }));
+          throw new Error(errMsg);
+        }
+
+        try {
+          generatedPlanData[key] = JSON.parse(textResponse);
+          setLoadingSectionStatuses(prev => ({ ...prev, [key]: "done" }));
+        } catch (err) {
+          setLoadingSectionStatuses(prev => ({ ...prev, [key]: "error" }));
+          throw new Error(`Failed to parse response for ${name}: ${textResponse.substring(0, 100)}`);
+        }
       }
 
-      const rawPlan = await response.json();
-
       const newPlan: BusinessPlan = {
-        ...rawPlan,
+        ...generatedPlanData,
         id: crypto.randomUUID(),
         createdAt: new Date().toISOString(),
         businessName,
@@ -186,14 +224,10 @@ export default function App() {
       // Save to local saves history list
       const updated = [newPlan, ...savedPlans];
       savePlanToStorage(updated);
-
-      // Reset form variables optionally, but keep them for reference if they want to edit/regenerate
-      // Transition to display workspace
     } catch (err: any) {
       console.error(err);
       setError(err.message || "An unexpected error occurred while communicating with the AI server.");
     } finally {
-      cleanupSeq();
       setLoading(false);
     }
   };
@@ -1112,14 +1146,70 @@ ${currentPlan.financialOutlook.fundingGoal}
                 Gemini AI is crafting industry-tailored marketing, financial, operational, and positioning strategies...
               </p>
 
-              {/* Progress bar and dynamic phase explanation */}
-              <div className="mt-8 max-w-lg w-full bg-white rounded-xl p-4 border border-slate-200 shadow-sm">
-                <div className="flex items-center gap-3">
-                  <Loader2 className="w-4 h-4 text-sky-600 animate-spin shrink-0" />
-                  <span className="text-xs font-semibold text-slate-700 text-left line-clamp-1">{loadingPhase}</span>
+              {/* Progress list and dynamic phase explanation */}
+              <div className="mt-8 max-w-md w-full bg-white rounded-xl p-6 border border-slate-200 shadow-md text-left">
+                <h3 className="text-sm font-semibold text-slate-800 mb-4 border-b pb-2">Generation Progress</h3>
+                <div className="space-y-4">
+                  {[
+                    { key: "executiveSummary", name: "1. Executive Summary" },
+                    { key: "marketAnalysis", name: "2. Market Analysis" },
+                    { key: "marketingStrategy", name: "3. Marketing Strategy" },
+                    { key: "operationsPlan", name: "4. Operations & Technology" },
+                    { key: "financialOutlook", name: "5. Financial Outlook & Funding" }
+                  ].map((sec) => {
+                    const status = loadingSectionStatuses[sec.key] || "pending";
+                    return (
+                      <div key={sec.key} className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          {status === "pending" && (
+                            <div className="w-5 h-5 rounded-full border border-slate-200 flex items-center justify-center bg-slate-50 shrink-0">
+                              <span className="w-1.5 h-1.5 rounded-full bg-slate-300"></span>
+                            </div>
+                          )}
+                          {status === "loading" && (
+                            <div className="w-5 h-5 rounded-full flex items-center justify-center shrink-0">
+                              <Loader2 className="w-5 h-5 text-sky-600 animate-spin" />
+                            </div>
+                          )}
+                          {status === "done" && (
+                            <div className="w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center text-white shrink-0 shadow-sm">
+                              <Check className="w-3.5 h-3.5 stroke-[3]" />
+                            </div>
+                          )}
+                          {status === "error" && (
+                            <div className="w-5 h-5 rounded-full bg-rose-500 flex items-center justify-center text-white shrink-0 shadow-sm">
+                              <X className="w-3 h-3 stroke-[3]" />
+                            </div>
+                          )}
+                          <span className={`text-sm font-medium ${
+                            status === "loading" ? "text-sky-600 font-bold" :
+                            status === "done" ? "text-slate-700" : "text-slate-400"
+                          }`}>
+                            {sec.name}
+                          </span>
+                        </div>
+                        {status === "loading" && (
+                          <span className="text-[10px] bg-sky-50 text-sky-600 px-2 py-0.5 rounded-full font-semibold animate-pulse uppercase tracking-wider">
+                            Drafting...
+                          </span>
+                        )}
+                        {status === "done" && (
+                          <span className="text-[10px] bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-full font-semibold uppercase tracking-wider">
+                            Complete
+                          </span>
+                        )}
+                        {status === "pending" && (
+                          <span className="text-[10px] text-slate-300 uppercase tracking-wider">
+                            Queued
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
-                <div className="mt-3 w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
-                  <div className="bg-sky-600 h-1.5 rounded-full animate-pulse w-4/5"></div>
+
+                <div className="mt-5 pt-3 border-t border-slate-100 flex items-center gap-2">
+                  <span className="text-xs text-slate-500 font-medium italic">{loadingPhase}</span>
                 </div>
               </div>
             </motion.div>
