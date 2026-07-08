@@ -6,15 +6,30 @@ dotenv.config();
 
 const app = express();
 
-// Initialize GoogleGenAI with appropriate headers
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      "User-Agent": "aistudio-build",
-    },
-  },
-});
+// Lazy-initialized GoogleGenAI helper to prevent module load failures when GEMINI_API_KEY is missing
+let aiInstance: GoogleGenAI | null = null;
+
+function getAI(): GoogleGenAI {
+  if (!aiInstance) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error(
+        "GEMINI_API_KEY environment variable is not defined. " +
+        "Please configure your Gemini API Key in your Vercel project environment variables, " +
+        "or ensure it is added via the Secrets panel in AI Studio."
+      );
+    }
+    aiInstance = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          "User-Agent": "aistudio-build",
+        },
+      },
+    });
+  }
+  return aiInstance;
+}
 
 app.use(express.json());
 
@@ -199,7 +214,7 @@ app.post("/api/generate-section", async (req, res) => {
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
     res.setHeader("Transfer-Encoding", "chunked");
 
-    const resultStream = await ai.models.generateContentStream({
+    const resultStream = await getAI().models.generateContentStream({
       model: "gemini-3.5-flash",
       contents: prompt,
       config: {
@@ -265,7 +280,7 @@ app.post("/api/refine-section", async (req, res) => {
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
     res.setHeader("Transfer-Encoding", "chunked");
 
-    const resultStream = await ai.models.generateContentStream({
+    const resultStream = await getAI().models.generateContentStream({
       model: "gemini-3.5-flash",
       contents: prompt,
       config: {
