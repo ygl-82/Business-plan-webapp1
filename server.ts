@@ -198,7 +198,10 @@ app.post("/api/generate-section", async (req, res) => {
       `;
     }
 
-    const response = await ai.models.generateContent({
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader("Transfer-Encoding", "chunked");
+
+    const resultStream = await ai.models.generateContentStream({
       model: "gemini-3.5-flash",
       contents: prompt,
       config: {
@@ -208,15 +211,19 @@ app.post("/api/generate-section", async (req, res) => {
       },
     });
 
-    if (!response.text) {
-      throw new Error("No response text received from Gemini API");
+    for await (const chunk of resultStream) {
+      if (chunk.text) {
+        res.write(chunk.text);
+      }
     }
-
-    const sectionData = JSON.parse(response.text.trim());
-    res.json(sectionData);
+    res.end();
   } catch (error: any) {
     console.error("Error generating business plan section:", error);
-    res.status(500).json({ error: error.message || "Failed to generate business plan section" });
+    if (!res.headersSent) {
+      res.status(500).json({ error: error.message || "Failed to generate business plan section" });
+    } else {
+      res.end();
+    }
   }
 });
 
@@ -257,7 +264,10 @@ app.post("/api/refine-section", async (req, res) => {
       If the current value was a list of items (or the feedback asks for lists), you can return a clean list of refined items separated by newlines, or a solid paragraph. If you want to return a list, make each item on a new line starting with an optional bullet point.
     `;
 
-    const response = await ai.models.generateContent({
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader("Transfer-Encoding", "chunked");
+
+    const resultStream = await ai.models.generateContentStream({
       model: "gemini-3.5-flash",
       contents: prompt,
       config: {
@@ -265,11 +275,19 @@ app.post("/api/refine-section", async (req, res) => {
       },
     });
 
-    const refinedText = response.text?.trim() || "";
-    res.json({ refinedText });
+    for await (const chunk of resultStream) {
+      if (chunk.text) {
+        res.write(chunk.text);
+      }
+    }
+    res.end();
   } catch (error: any) {
     console.error("Error refining business plan section:", error);
-    res.status(500).json({ error: error.message || "Failed to refine business plan section" });
+    if (!res.headersSent) {
+      res.status(500).json({ error: error.message || "Failed to refine business plan section" });
+    } else {
+      res.end();
+    }
   }
 });
 

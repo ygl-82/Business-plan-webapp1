@@ -38,6 +38,23 @@ import { DEMO_TEMPLATES } from "./data";
 import { generateBusinessPlanPDF } from "./pdfGenerator";
 import { BusinessPlan } from "./types";
 
+const readStreamText = async (response: Response): Promise<string> => {
+  if (!response.body) {
+    return "";
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let accumulated = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    accumulated += decoder.decode(value, { stream: true });
+  }
+  return accumulated;
+};
+
 export default function App() {
   // App state
   const [step, setStep] = useState<number>(1);
@@ -181,9 +198,8 @@ export default function App() {
           }),
         });
 
-        const textResponse = await response.text();
-
         if (!response.ok) {
+          const textResponse = await response.text();
           let errMsg = `Failed to generate ${name}`;
           try {
             const errData = JSON.parse(textResponse);
@@ -194,6 +210,8 @@ export default function App() {
           setLoadingSectionStatuses(prev => ({ ...prev, [key]: "error" }));
           throw new Error(errMsg);
         }
+
+        const textResponse = await readStreamText(response);
 
         try {
           generatedPlanData[key] = JSON.parse(textResponse);
@@ -414,8 +432,7 @@ export default function App() {
         throw new Error("Refinement request failed");
       }
 
-      const data = await response.json();
-      const refinedText = data.refinedText;
+      const refinedText = await readStreamText(response);
 
       setChatMessages((prev) => [
         ...prev,
