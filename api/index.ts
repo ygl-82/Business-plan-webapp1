@@ -1,5 +1,5 @@
 import express from "express";
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -218,9 +218,12 @@ app.post("/api/generate-section", async (req, res) => {
       model: "gemini-3.5-flash",
       contents: prompt,
       config: {
-        systemInstruction: "You are a professional, highly detail-oriented business strategist. Your suggestions are realistic, thorough, practical, and highly specific to the user's input. Never return generic placeholders.",
+        systemInstruction: "You are a professional, highly detail-oriented business strategist. Your suggestions are realistic, thorough, practical, and highly specific to the user's input. Never return generic placeholders. Provide high-quality details, but remain extremely concise, direct, and punchy to optimize generation speed.",
         responseMimeType: "application/json",
         responseSchema: schema,
+        thinkingConfig: {
+          thinkingLevel: ThinkingLevel.LOW
+        }
       },
     });
 
@@ -284,7 +287,10 @@ app.post("/api/refine-section", async (req, res) => {
       model: "gemini-3.5-flash",
       contents: prompt,
       config: {
-        systemInstruction: "You are an expert business plan editor. Your suggestions are realistic, professional, highly aligned with the user's prompt, and elegant. Return ONLY the refined content itself without any conversational greeting or concluding text.",
+        systemInstruction: "You are an expert business plan editor. Your suggestions are realistic, professional, highly aligned with the user's prompt, and elegant. Return ONLY the refined content itself without any conversational greeting or concluding text. Be concise and to the point.",
+        thinkingConfig: {
+          thinkingLevel: ThinkingLevel.LOW
+        }
       },
     });
 

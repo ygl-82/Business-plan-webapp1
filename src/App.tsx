@@ -75,8 +75,6 @@ export default function App() {
 
   // Generated Plan State
   const [currentPlan, setCurrentPlan] = useState<BusinessPlan | null>(null);
-  const [savedPlans, setSavedPlans] = useState<BusinessPlan[]>([]);
-  const [showHistory, setShowHistory] = useState<boolean>(false);
   const [showSafetyWarning, setShowSafetyWarning] = useState<boolean>(true);
   const [showIntroModal, setShowIntroModal] = useState<boolean>(true);
   const [showFloatingBadge, setShowFloatingBadge] = useState<boolean>(true);
@@ -93,16 +91,6 @@ export default function App() {
 
   // References
   const workspaceTopRef = useRef<HTMLDivElement>(null);
-
-  // Reset Saved Plans on mount (Session-only, no persistent storage)
-  useEffect(() => {
-    setSavedPlans([]);
-  }, []);
-
-  // Save Plans helper (Session-only, no persistent storage)
-  const savePlanToStorage = (updatedList: BusinessPlan[]) => {
-    setSavedPlans(updatedList);
-  };
 
   // Prefill helper
   const handleApplyTemplate = (tpl: typeof DEMO_TEMPLATES[0]) => {
@@ -146,7 +134,7 @@ export default function App() {
     return () => clearInterval(interval);
   };
 
-  // Handle Plan Generation (sequential section-by-section to prevent gateway/Vercel timeouts)
+  // Handle Plan Generation (Parallel generation for ultra-fast performance and preventing timeouts)
   const handleGeneratePlan = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -170,57 +158,55 @@ export default function App() {
 
     const initialStatuses: Record<string, "pending" | "loading" | "done" | "error"> = {};
     sectionsToGenerate.forEach(s => {
-      initialStatuses[s.key] = "pending";
+      initialStatuses[s.key] = "loading";
     });
     setLoadingSectionStatuses(initialStatuses);
+    setLoadingPhase("Analyzing input data and drafting all sections in parallel...");
 
     const generatedPlanData: any = {};
 
     try {
-      for (let i = 0; i < sectionsToGenerate.length; i++) {
-        const { key, name } = sectionsToGenerate[i];
-        
-        setLoadingSectionStatuses(prev => ({ ...prev, [key]: "loading" }));
-        setLoadingPhase(`Drafting Section ${i + 1} of 5: ${name}...`);
+      await Promise.all(
+        sectionsToGenerate.map(async ({ key, name }) => {
+          const response = await fetch("/api/generate-section", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              section: key,
+              businessName,
+              niche,
+              targetAudience,
+              objectives,
+              location,
+              stage,
+              timeline,
+            }),
+          });
 
-        const response = await fetch("/api/generate-section", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            section: key,
-            businessName,
-            niche,
-            targetAudience,
-            objectives,
-            location,
-            stage,
-            timeline,
-          }),
-        });
-
-        if (!response.ok) {
-          const textResponse = await response.text();
-          let errMsg = `Failed to generate ${name}`;
-          try {
-            const errData = JSON.parse(textResponse);
-            errMsg = errData.error || errMsg;
-          } catch (_) {
-            errMsg = textResponse || `Server responded with status ${response.status}`;
+          if (!response.ok) {
+            const textResponse = await response.text();
+            let errMsg = `Failed to generate ${name}`;
+            try {
+              const errData = JSON.parse(textResponse);
+              errMsg = errData.error || errMsg;
+            } catch (_) {
+              errMsg = textResponse || `Server responded with status ${response.status}`;
+            }
+            setLoadingSectionStatuses(prev => ({ ...prev, [key]: "error" }));
+            throw new Error(errMsg);
           }
-          setLoadingSectionStatuses(prev => ({ ...prev, [key]: "error" }));
-          throw new Error(errMsg);
-        }
 
-        const textResponse = await readStreamText(response);
+          const textResponse = await readStreamText(response);
 
-        try {
-          generatedPlanData[key] = JSON.parse(textResponse);
-          setLoadingSectionStatuses(prev => ({ ...prev, [key]: "done" }));
-        } catch (err) {
-          setLoadingSectionStatuses(prev => ({ ...prev, [key]: "error" }));
-          throw new Error(`Failed to parse response for ${name}: ${textResponse.substring(0, 100)}`);
-        }
-      }
+          try {
+            generatedPlanData[key] = JSON.parse(textResponse);
+            setLoadingSectionStatuses(prev => ({ ...prev, [key]: "done" }));
+          } catch (err) {
+            setLoadingSectionStatuses(prev => ({ ...prev, [key]: "error" }));
+            throw new Error(`Failed to parse response for ${name}: ${textResponse.substring(0, 100)}`);
+          }
+        })
+      );
 
       const newPlan: BusinessPlan = {
         ...generatedPlanData,
@@ -238,10 +224,6 @@ export default function App() {
       setCurrentPlan(newPlan);
       setActiveSection("executiveSummary");
       setIsEditing(false);
-
-      // Save to local saves history list
-      const updated = [newPlan, ...savedPlans];
-      savePlanToStorage(updated);
     } catch (err: any) {
       console.error(err);
       setError(err.message || "An unexpected error occurred while communicating with the AI server.");
@@ -250,39 +232,8 @@ export default function App() {
     }
   };
 
-  // Load a plan from history
-  const handleLoadPlan = (plan: BusinessPlan) => {
-    setCurrentPlan(plan);
-    setBusinessName(plan.businessName);
-    setNiche(plan.niche);
-    setTargetAudience(plan.targetAudience);
-    setObjectives(plan.objectives);
-    setLocation(plan.location);
-    setStage(plan.stage);
-    setTimeline(plan.timeline);
-    setActiveSection("executiveSummary");
-    setIsEditing(false);
-    setShowHistory(false);
-    setChatMessages([]);
-  };
-
-  // Delete a saved plan
-  const handleDeletePlan = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (confirm("Are you sure you want to delete this business plan from your browser's history?")) {
-      const filtered = savedPlans.filter((p) => p.id !== id);
-      savePlanToStorage(filtered);
-      if (currentPlan?.id === id) {
-        setCurrentPlan(null);
-      }
-    }
-  };
-
   // Handle manual saving of edited plan details
   const handleSaveEdits = () => {
-    if (!currentPlan) return;
-    const updated = savedPlans.map((p) => (p.id === currentPlan.id ? currentPlan : p));
-    savePlanToStorage(updated);
     setIsEditing(false);
   };
 
@@ -683,20 +634,11 @@ ${currentPlan.financialOutlook.fundingGoal}
         </div>
 
         <div className="flex items-center gap-3">
-          <button
-            id="history_btn"
-            onClick={() => setShowHistory(!showHistory)}
-            className="flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-medium transition-colors border border-slate-700"
-          >
-            <History className="w-4 h-4" />
-            <span>Saves ({savedPlans.length})</span>
-          </button>
-
           {currentPlan && (
             <button
               id="reset_btn"
               onClick={() => {
-                if (confirm("Start a new business plan? This will clear the active workspace (your current plan remains saved in your saves list).")) {
+                if (confirm("Start a new business plan? This will clear the active workspace and start fresh.")) {
                   setCurrentPlan(null);
                   setStep(1);
                 }
@@ -741,71 +683,6 @@ ${currentPlan.financialOutlook.fundingGoal}
         </AnimatePresence>
 
         <AnimatePresence mode="wait">
-          {/* HISTORY SIDE-DRAWER */}
-          {showHistory && (
-            <motion.div
-              initial={{ opacity: 0, x: 100 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 100 }}
-              className="fixed right-0 top-[73px] bottom-0 w-full sm:w-96 bg-white shadow-2xl border-l border-slate-200 z-50 p-6 flex flex-col"
-            >
-              <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-4">
-                <div className="flex items-center gap-2">
-                  <History className="text-sky-600 w-5 h-5" />
-                  <h3 className="font-bold text-slate-800">Saved Business Plans</h3>
-                </div>
-                <button
-                  onClick={() => setShowHistory(false)}
-                  className="p-1 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              <div className="flex-1 overflow-y-auto space-y-3">
-                {savedPlans.length === 0 ? (
-                  <div className="text-center py-12 text-slate-400">
-                    <FileText className="w-12 h-12 mx-auto mb-3 opacity-30" />
-                    <p className="text-sm font-medium">No plans saved yet</p>
-                    <p className="text-xs mt-1">Generate a plan to save it here automatically.</p>
-                  </div>
-                ) : (
-                  savedPlans.map((item) => (
-                    <div
-                      key={item.id}
-                      onClick={() => handleLoadPlan(item)}
-                      className={`p-4 rounded-xl border text-left cursor-pointer transition-all group ${
-                        currentPlan?.id === item.id
-                          ? "bg-sky-50/70 border-sky-300 shadow-sm"
-                          : "bg-slate-50 border-slate-200 hover:border-slate-300 hover:bg-slate-100/50"
-                      }`}
-                    >
-                      <div className="flex justify-between items-start">
-                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 uppercase tracking-wider">
-                          {item.stage.replace(" stage", "")}
-                        </span>
-                        <button
-                          onClick={(e) => handleDeletePlan(item.id, e)}
-                          className="p-1 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-all opacity-0 group-hover:opacity-100 focus:opacity-100"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                      <h4 className="font-bold text-slate-800 mt-2 truncate">{item.businessName}</h4>
-                      <p className="text-xs text-slate-500 line-clamp-1 mt-1">{item.niche}</p>
-                      <div className="flex items-center justify-between text-[11px] text-slate-400 mt-3 pt-2 border-t border-slate-200/50">
-                        <span>{new Date(item.createdAt).toLocaleDateString()}</span>
-                        <span className="text-sky-600 font-semibold flex items-center gap-0.5">
-                          Load Plan <ArrowRight className="w-3 h-3" />
-                        </span>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </motion.div>
-          )}
-
           {/* ACTIVE STEPPER FORM (IF NO PLAN ACTIVE) */}
           {!currentPlan && !loading && (
             <motion.div
