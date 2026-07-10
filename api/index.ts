@@ -116,6 +116,89 @@ const sectionSchemas: Record<string, any> = {
   }
 };
 
+// API: Generate the full business plan in a single call (highly optimized to prevent rate-limits and timeouts)
+app.post("/api/generate-plan", async (req, res) => {
+  try {
+    const {
+      businessName,
+      niche,
+      targetAudience,
+      objectives,
+      location,
+      stage,
+      timeline,
+    } = req.body;
+
+    if (!businessName || !niche || !targetAudience) {
+      return res.status(400).json({
+        error: "Missing required fields: businessName, niche, targetAudience are mandatory.",
+      });
+    }
+
+    const fullPlanSchema = {
+      type: Type.OBJECT,
+      properties: {
+        executiveSummary: sectionSchemas.executiveSummary,
+        marketAnalysis: sectionSchemas.marketAnalysis,
+        marketingStrategy: sectionSchemas.marketingStrategy,
+        operationsPlan: sectionSchemas.operationsPlan,
+        financialOutlook: sectionSchemas.financialOutlook,
+      },
+      required: ["executiveSummary", "marketAnalysis", "marketingStrategy", "operationsPlan", "financialOutlook"],
+    };
+
+    const prompt = `
+      You are an expert business consultant and strategist. Generate a comprehensive, highly professional, realistic, and coherent business plan for a company with this profile:
+      Business Name: "${businessName}"
+      Niche: "${niche}"
+      Target Audience: "${targetAudience}"
+      Objectives: "${objectives || "Launch successfully and scale operations"}"
+      Location: "${location || "Global / Online"}"
+      Stage: "${stage || "Early-stage startup"}"
+      Timeline: "${timeline || "Next 6 months"}"
+
+      Generate all five core sections of the business plan:
+      1. Executive Summary: mission, vision, problemSolved, solution, and 3-5 keySuccessFactors.
+      2. Market Analysis: audienceProfile, competitorAnalysis, marketTrends, and SWOT analysis.
+      3. Marketing Strategy: positioning, pricingModel, 3-5 marketingChannels, and salesTactic.
+      4. Operations Plan: keyOperations, 3-5 technologyRequirements, and personnelNeeds.
+      5. Financial Outlook: 2-4 revenueStreams, 3-5 operational expenses (costStructure), path to break-even, and estimated fundingGoal.
+
+      Ensure every suggestion is realistic, highly practical, thorough, and specific to the user's input. Provide excellent details but remain concise, direct, and punchy.
+    `;
+
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader("Transfer-Encoding", "chunked");
+
+    const resultStream = await getAI().models.generateContentStream({
+      model: "gemini-3.5-flash",
+      contents: prompt,
+      config: {
+        systemInstruction: "You are a professional, highly detail-oriented business strategist. Your suggestions are realistic, thorough, practical, and highly specific to the user's input. Never return generic placeholders. Provide high-quality details, but remain extremely concise, direct, and punchy to optimize generation speed.",
+        responseMimeType: "application/json",
+        responseSchema: fullPlanSchema,
+        thinkingConfig: {
+          thinkingLevel: ThinkingLevel.LOW,
+        },
+      },
+    });
+
+    for await (const chunk of resultStream) {
+      if (chunk.text) {
+        res.write(chunk.text);
+      }
+    }
+    res.end();
+  } catch (error: any) {
+    console.error("Error generating business plan:", error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: error.message || "Failed to generate business plan" });
+    } else {
+      res.end();
+    }
+  }
+});
+
 // API: Generate business plan section-by-section (super fast & prevents timeouts)
 app.post("/api/generate-section", async (req, res) => {
   try {

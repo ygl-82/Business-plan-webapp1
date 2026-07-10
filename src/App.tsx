@@ -134,7 +134,7 @@ export default function App() {
     return () => clearInterval(interval);
   };
 
-  // Handle Plan Generation (Parallel generation for ultra-fast performance and preventing timeouts)
+  // Handle Plan Generation (Single call to prevent rate-limits and timeouts)
   const handleGeneratePlan = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -161,52 +161,51 @@ export default function App() {
       initialStatuses[s.key] = "loading";
     });
     setLoadingSectionStatuses(initialStatuses);
-    setLoadingPhase("Analyzing input data and drafting all sections in parallel...");
-
-    const generatedPlanData: any = {};
+    setLoadingPhase("Analyzing input data and drafting all sections...");
 
     try {
-      await Promise.all(
-        sectionsToGenerate.map(async ({ key, name }) => {
-          const response = await fetch("/api/generate-section", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              section: key,
-              businessName,
-              niche,
-              targetAudience,
-              objectives,
-              location,
-              stage,
-              timeline,
-            }),
-          });
+      const response = await fetch("/api/generate-plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          businessName,
+          niche,
+          targetAudience,
+          objectives,
+          location,
+          stage,
+          timeline,
+        }),
+      });
 
-          if (!response.ok) {
-            const textResponse = await response.text();
-            let errMsg = `Failed to generate ${name}`;
-            try {
-              const errData = JSON.parse(textResponse);
-              errMsg = errData.error || errMsg;
-            } catch (_) {
-              errMsg = textResponse || `Server responded with status ${response.status}`;
-            }
-            setLoadingSectionStatuses(prev => ({ ...prev, [key]: "error" }));
-            throw new Error(errMsg);
-          }
+      if (!response.ok) {
+        const textResponse = await response.text();
+        let errMsg = "Failed to generate business plan";
+        try {
+          const errData = JSON.parse(textResponse);
+          errMsg = errData.error || errMsg;
+        } catch (_) {
+          errMsg = textResponse || `Server responded with status ${response.status}`;
+        }
+        sectionsToGenerate.forEach(s => {
+          setLoadingSectionStatuses(prev => ({ ...prev, [s.key]: "error" }));
+        });
+        throw new Error(errMsg);
+      }
 
-          const textResponse = await readStreamText(response);
-
-          try {
-            generatedPlanData[key] = JSON.parse(textResponse);
-            setLoadingSectionStatuses(prev => ({ ...prev, [key]: "done" }));
-          } catch (err) {
-            setLoadingSectionStatuses(prev => ({ ...prev, [key]: "error" }));
-            throw new Error(`Failed to parse response for ${name}: ${textResponse.substring(0, 100)}`);
-          }
-        })
-      );
+      const textResponse = await readStreamText(response);
+      let generatedPlanData: any;
+      try {
+        generatedPlanData = JSON.parse(textResponse);
+        sectionsToGenerate.forEach(s => {
+          setLoadingSectionStatuses(prev => ({ ...prev, [s.key]: "done" }));
+        });
+      } catch (err) {
+        sectionsToGenerate.forEach(s => {
+          setLoadingSectionStatuses(prev => ({ ...prev, [s.key]: "error" }));
+        });
+        throw new Error(`Failed to parse the generated plan: ${textResponse.substring(0, 100)}`);
+      }
 
       const newPlan: BusinessPlan = {
         ...generatedPlanData,
